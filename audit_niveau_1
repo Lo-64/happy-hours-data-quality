@@ -1,0 +1,68 @@
+import pandas as pd
+
+# 1. Chargement de la table centrale
+chemin = r"C:\Users\LoicM\OneDrive\Documents\STAT MA 1\Data mining\projet_dagster\product_snapshots_bruxelles_2024-01_2026-08.parquet"
+print("Chargement des données en cours...")
+df = pd.read_parquet(chemin)
+total_lignes = len(df)
+print(f"Total de lignes chargées : {total_lignes:,}\n")
+
+# 2. Check valeurs manquantes 
+print("=" * 60)
+print("VALEURS MANQUANTES (NULLS)")
+print("=" * 60)
+nulls = df.isnull().sum() # Compte le nombre de cases manquantes du tableau 
+nulls_pct = (nulls / total_lignes) * 100
+rapport_nulls = pd.DataFrame({"Valeurs Manquantes": nulls, "Pourcentage (%)": nulls_pct.round(2)})
+print(rapport_nulls[rapport_nulls["Valeurs Manquantes"] > 0])
+if (nulls == 0).all():
+    print("Aucune valeur manquante détectée.")
+
+# 3. Pour colonnes de chiffres: calcul de la valeur min,max et de la médiane.
+print("\n" + "=" * 60)
+print("BORNES NUMÉRIQUES (MIN / MEDIANE / MAX)")
+print("=" * 60)
+colonnes_num = [
+    "quantity_put_on_sale_start_of_day", 
+    "quantity_sold", 
+    "quantity_end_sales", 
+    "origin_quantity", 
+    "old_price", 
+    "new_price", 
+    "unit_weight"
+]
+stats = df[colonnes_num].describe().T[["min", "50%", "max"]]
+stats.columns = ["Min", "Médiane", "Max"]
+print(stats)
+
+# 4. Premiers tests d'anomalie
+print("\n" + "=" * 60)
+print("DÉTECTION DES ANOMALIES DE BORNES STRICTES")
+print("=" * 60)
+anomalies = {
+    "Stock début de journée négatif (< 0)": (df["quantity_put_on_sale_start_of_day"] < 0).sum(),
+    "Ventes négatives (< 0)": (df["quantity_sold"] < 0).sum(),
+    "Stock fin de journée négatif (< 0)": (df["quantity_end_sales"] < 0).sum(),
+    "Quantité d'origine négative (< 0)": (df["origin_quantity"] < 0).sum(),
+    "Prix remisé nul ou négatif (new_price <= 0)": (df["new_price"] <= 0).sum(),
+    "Prix d'origine nul ou négatif (old_price <= 0)": (df["old_price"] <= 0).sum(),
+    "Poids négatif (unit_weight < 0)": (df["unit_weight"] < 0).sum()
+}
+for regle, nb in anomalies.items():
+    pct = (nb / total_lignes) * 100
+    print(f"- {regle} : {nb:,} lignes ({pct:.3f} %)")
+
+# 5. Prend la date la plus ancienne et la plus récente de chaque colonne temporelle 
+# pour vérifier qu'aucune date n'est une abération
+print("\n" + "=" * 60)
+print("BORNES TEMPORELLES (PLAGES DE DATES)")
+print("=" * 60)
+colonnes_dates = ["snapshot_date", "scan_date", "expiry_date"]
+for col in colonnes_dates:
+    print(f"- {col} -> Min : {df[col].min()} | Max : {df[col].max()}")
+
+# 6. Liste toutes les valeurs distinctes trouvées et leur nombre d'apparition pour vérifier qu'on a bien uniquement "DLC" et "DDM"
+print("\n" + "=" * 60)
+print("TYPES DE DATE (date_type)")
+print("=" * 60)
+print(df["date_type"].value_counts(dropna=False))

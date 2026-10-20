@@ -1,0 +1,4 @@
+*.parquet
+venv/
+.vs/
+Annexe/

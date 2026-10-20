@@ -39,18 +39,27 @@ print(stats)
 print("\n" + "=" * 60)
 print("DÉTECTION DES ANOMALIES DE BORNES STRICTES")
 print("=" * 60)
-anomalies = {
-    "Stock début de journée négatif (< 0)": (df["quantity_put_on_sale_start_of_day"] < 0).sum(),
-    "Ventes négatives (< 0)": (df["quantity_sold"] < 0).sum(),
-    "Stock fin de journée négatif (< 0)": (df["quantity_end_sales"] < 0).sum(),
-    "Quantité d'origine négative (< 0)": (df["origin_quantity"] < 0).sum(),
-    "Prix remisé nul ou négatif (new_price <= 0)": (df["new_price"] <= 0).sum(),
-    "Prix d'origine nul ou négatif (old_price <= 0)": (df["old_price"] <= 0).sum(),
-    "Poids négatif (unit_weight < 0)": (df["unit_weight"] < 0).sum()
-}
-for regle, nb in anomalies.items():
-    pct = (nb / total_lignes) * 100
-    print(f"- {regle} : {nb:,} lignes ({pct:.3f} %)")
+regles = [
+    ("Stock début de journée négatif (< 0)", "quantity_put_on_sale_start_of_day", df["quantity_put_on_sale_start_of_day"] < 0),
+    ("Ventes négatives (< 0)", "quantity_sold", df["quantity_sold"] < 0),
+    ("Stock fin de journée négatif (< 0)", "quantity_end_sales", df["quantity_end_sales"] < 0),
+    ("Quantité d'origine négative (< 0)", "origin_quantity", df["origin_quantity"] < 0),
+    ("Prix remisé nul ou négatif (new_price <= 0)", "new_price", df["new_price"] <= 0),
+    ("Prix d'origine nul ou négatif (old_price <= 0)", "old_price", df["old_price"] <= 0),
+    ("Poids négatif (unit_weight < 0)", "unit_weight", df["unit_weight"] < 0)
+]
+
+for nom_regle, nom_colonne, condition in regles:
+    nb_lignes = condition.sum()  # Compte le nombre de lignes en anomalie. 
+    pct = (nb_lignes / total_lignes) * 100 # Calcules le pourcentages de lignes en anomalie sur le nombre de lignes totalles. 
+    print(f"\n- {nom_regle} : {nb_lignes:,} lignes ({pct:.3f} %)")
+    if nb_lignes > 0: # S'il y a au moins une anomalie, on liste les valeurs exactes et leur fréquence
+        valeurs_anormales = df.loc[condition, nom_colonne].value_counts() # Isole uniquement les cases en anomalie sur cette colonne précise et compte la fréquence de chaque valeur anormale trouvée.
+        print("  Détail des valeurs trouvées :")
+        for valeur, occurrences in valeurs_anormales.items(): # On print le tuple valeurs anormales
+            print(f"    * Valeur '{valeur}' -> apparue {occurrences:,} fois")
+        if len(valeurs_anormales) > 10:
+            print(f"    * ... et {len(valeurs_anormales) - 10} autres valeurs distinctes.")
 
 # 5. Prend la date la plus ancienne et la plus récente de chaque colonne temporelle 
 # pour vérifier qu'aucune date n'est une abération

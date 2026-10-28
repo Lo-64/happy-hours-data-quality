@@ -125,3 +125,102 @@ print(f"- Produits DLC proposés en rayon après expiration : {nb_dlc_rayon:,} (
 dlc_vendue = est_dlc_expiree & (df["quantity_sold"] > 0)
 nb_dlc_vendue = dlc_vendue.sum()
 print(f"- Produits DLC VENDUS après expiration : {nb_dlc_vendue:,} ({nb_dlc_vendue / total_lignes * 100:.3f} %)")
+
+
+# =============================================================
+# NIVEAU 3 : INTÉGRITÉ RELATIONNELLE (PRODUITS ORPHELINS)
+# =============================================================
+print("\n" + "=" * 65)
+print("NIVEAU 3 : INTÉGRITÉ RELATIONNELLE (CATALOGUE RÉFÉRENCE)")
+print("=" * 65)
+
+# 1. On charge le catalogue maître de la même façon que ta première table
+chemin_ref = r"C:\Users\LoicM\OneDrive\Documents\STAT MA 1\Data mining\projet_dagster\product_reference.parquet"
+df_ref = pd.read_parquet(chemin_ref)
+
+# 2. On extrait l'ensemble des codes EAN officiels et valides
+eans_officiels = set(df_ref["ean_code"].dropna())
+
+# 3. On repère dans 'df' les lignes dont l'EAN n'existe PAS dans le catalogue central (df_ref)
+lignes_orphelines = ~df["ean_code"].isin(eans_officiels)
+nb_orphelines = lignes_orphelines.sum()
+pct_orphelines = (nb_orphelines / total_lignes) * 100
+
+# 4. On compte combien d'articles différents cela représente
+nb_produits_inconnus = df.loc[lignes_orphelines, "ean_code"].nunique()
+
+print(f"- Lignes de stock avec EAN inconnu au catalogue : {nb_orphelines:,} ({pct_orphelines:.3f} %)")
+print(f"- Nombre de produits distincts non référencés : {nb_produits_inconnus:,}")
+
+# =============================================================
+# NIVEAU 4 : ANALYSE STATISTIQUE CONDITIONNELLE & VALIDATION CATÉGORIE
+# =============================================================
+print("\n" + "=" * 65)
+print("NIVEAU 4 : ANALYSE STATISTIQUE RIGOUREUSE (CATÉGORIES & RATIOS)")
+print("=" * 65)
+
+# -------------------------------------------------------------
+# 4.1. CHECK DE L'ERREUR D'UNITÉ (GRAMMES VS KILOS)
+# -------------------------------------------------------------
+print("1. VALIDATION CROISÉE DES POIDS AVEC LE CATALOGUE :")
+
+
+
+# Associe à chaque ligne de stock son poids officiel déclaré dans le catalogue via leur code EAN commun.
+df_poids = df[["ean_code", "product_name", "unit_weight"]].merge(
+    df_ref[["ean_code", "unit", "unit_quantity"]], on="ean_code", how="left"
+)
+
+masque_valide = (df_poids["unit_weight"] > 0) & (df_poids["unit_quantity"] > 0) # Élimine les articles sans poids ou à 0 pour éviter toute division par zéro ou valeur indéfinie.
+df_valid_weight = df_poids[masque_valide].copy() #  Crée un sous-tableau propre contenant uniquement les lignes exploitables. 
+
+# Divise le poids affiché en rayon par le poids officiel. Un résultat de 1.0 indique la même unité ; un résultat de 1000.0 prouve une saisie en grammes 
+df_valid_weight["ratio"] = (df_valid_weight["unit_weight"] / df_valid_weight["unit_quantity"]).round(1)
+
+# On compte les lignes où le ratio est exactement de 1 000 (saisie en grammes)
+lignes_ratio_1000 = (df_valid_weight["ratio"] >= 950) & (df_valid_weight["ratio"] <= 1050)
+nb_ratio_1000 = lignes_ratio_1000.sum()
+pct_ratio_1000 = (nb_ratio_1000 / total_lignes) * 100
+
+print(f"- Lignes avec ratio ~1 000 (preuve de saisie en grammes) : {nb_ratio_1000:,} ({pct_ratio_1000:.3f} %)")
+print("Attention les autres rations comme 4,6,12 peuvent être des produits vendus en packs/lots. Ratios de 0.5, 0.25 peuvent être des portions vendues à la coupe ou demi-formats.")
+
+print(" Distribution des principaux ratios observés :")
+top_ratios = df_valid_weight["ratio"].value_counts().head(5)
+for ratio_val, count in top_ratios.items():
+    interpretation = "Poids identique (normal)" if ratio_val == 1.0 else ("Facteur 1 000 (Grammes)" if ratio_val == 1000.0 else "Autre facteur")
+    print(f"    * Ratio {ratio_val:>7.1f} -> {count:,} lignes ({interpretation})")
+
+
+# -------------------------------------------------------------
+# 4.2. PRIX ANORMAUX PAR CATÉGORIE (MÉTHODE DE TUKEY : Q3 + 3 * IQR)
+# -------------------------------------------------------------
+print("\n2. PRIX ANORMAUX PAR CATÉGORIE:")
+
+# Calcul de Q1 (25%), Q3 (75%) et IQR (=écart interquartile) par catégorie
+stats_cat = df.groupby("category")["old_price"].quantile([0.25, 0.75]).unstack()
+stats_cat["IQR"] = stats_cat[0.75] - stats_cat[0.25]
+# Seuil Tukey pour borner le prix maximum plausible au-delà duquel un article est une anomalie extrême: Q3 + 3 * IQR
+stats_cat["seuil_extreme"] = stats_cat[0.75] + (3.0 * stats_cat["IQR"])
+
+# On associe le seuil de sa catégorie à chaque ligne
+df_prix = df[["category", "product_name", "old_price", "new_price"]].merge(
+    stats_cat[["seuil_extreme"]], on="category", how="left"
+)
+
+# On filtre les prix qui explosent le seuil de leur propre catégorie
+outliers_prix = df_prix[df_prix["old_price"] > df_prix["seuil_extreme"]]
+nb_outliers_prix = len(outliers_prix)
+pct_outliers_prix = (nb_outliers_prix / total_lignes) * 100
+
+print(f"- Lignes en anomalie extrême par rapport à leur rayon : {nb_outliers_prix:,} ({pct_outliers_prix:.3f} %)")
+
+print("  Top 5 des anomalies de prix les plus violentes relatives à leur catégorie :")
+outliers_prix = outliers_prix.copy()
+outliers_prix["multiplicateur_seuil"] = outliers_prix["old_price"] / outliers_prix["seuil_extreme"] # Mesure la gravité de l'écart (ex: un produit qui coûte 50 fois le maximum de son rayon).
+top_outliers = outliers_prix.sort_values(by="multiplicateur_seuil", ascending=False).drop_duplicates(subset=["product_name"]).head(5) # Affiche les 5 pires cas distincts.
+
+for _, ligne in top_outliers.iterrows():
+    nom = str(ligne["product_name"])[:30]
+    cat = str(ligne["category"])[:15]
+    print(f"    * [{cat:<15}] {nom:<30} | Prix: {ligne['old_price']:>7.2f} € (Seuil max rayon: {ligne['seuil_extreme']:.2f} €)")
